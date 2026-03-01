@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	task "github.com/containerd/containerd/api/runtime/task/v2"
 	containerd_v1_types "github.com/containerd/containerd/api/types/task"
@@ -130,8 +131,25 @@ func (s *service) createInternal(ctx context.Context, req *task.CreateTaskReques
 	}
 
 	if !emptyShimOpts {
+		sandboxPlatform := shimOpts.GetSandboxPlatform()
+		if sandboxPlatform == "" {
+			// Infer platform from the OCI spec when not explicitly configured.
+			// containerd's default config sets SandboxIsolation without SandboxPlatform,
+			// making options non-empty but leaving the platform unset. Rather than
+			// failing, fall back to spec-based inference which is already used when
+			// options are entirely empty.
+			if oci.IsLCOW(&spec) {
+				sandboxPlatform = "linux/" + runtime.GOARCH
+			} else if oci.IsWCOW(&spec) {
+				sandboxPlatform = "windows/" + runtime.GOARCH
+			} else {
+				return nil, fmt.Errorf("cannot infer runtime sandbox platform from OCI spec: no Linux or Windows config present")
+			}
+			shimOpts.SandboxPlatform = sandboxPlatform
+		}
+
 		// validate runtime platform
-		plat, err := platforms.Parse(shimOpts.GetSandboxPlatform())
+		plat, err := platforms.Parse(sandboxPlatform)
 		if err != nil {
 			return nil, fmt.Errorf("invalid runtime sandbox platform: %w", err)
 		}
